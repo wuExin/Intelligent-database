@@ -31,6 +31,12 @@ function parseExportIntent(input: string): "csv" | "json" | "decline" | "unknown
   return "unknown";
 }
 
+function parseSlashCommand(input: string): { command: string; args: string } | null {
+  const match = input.match(/^\/(\w+)\s*(.*)/);
+  if (!match || !match[1]) return null;
+  return { command: match[1].toLowerCase(), args: (match[2] || "").trim() };
+}
+
 export const ChatPanel: React.FC<ChatPanelProps> = ({
   selectedDatabase,
   onQueryResultReady,
@@ -203,10 +209,64 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     setAwaitingExportResponse(false);
   }, [addMessage]);
 
+  const handleSlashCommand = useCallback(
+    async (command: string, args: string): Promise<boolean> => {
+      if (command === "export") {
+        const format = args.toLowerCase();
+        if (format !== "csv" && format !== "json" && format !== "") {
+          addMessage(
+            "assistant",
+            "text",
+            `未知的导出格式 "${args}"。支持的格式: csv, json\n用法: /export csv 或 /export json`
+          );
+          return true;
+        }
+
+        if (!latestResult) {
+          addMessage(
+            "assistant",
+            "text",
+            "当前没有查询结果，请先执行查询后再导出。"
+          );
+          return true;
+        }
+
+        const exportFormat = (format || "csv") as "csv" | "json";
+        await performExport(exportFormat);
+        return true;
+      }
+
+      if (command === "help") {
+        addMessage(
+          "assistant",
+          "text",
+          "可用命令:\n/export csv — 将当前查询结果导出为 CSV\n/export json — 将当前查询结果导出为 JSON\n/help — 显示此帮助信息"
+        );
+        return true;
+      }
+
+      addMessage(
+        "assistant",
+        "text",
+        `未知命令 "/${command}"。输入 /help 查看可用命令。`
+      );
+      return true;
+    },
+    [addMessage, latestResult, performExport]
+  );
+
   const handleSend = useCallback(async () => {
     const text = inputValue.trim();
     if (!text || isProcessing) return;
     setInputValue("");
+
+    // Check for slash commands
+    const slashCmd = parseSlashCommand(text);
+    if (slashCmd) {
+      addMessage("user", "nl_prompt", text);
+      await handleSlashCommand(slashCmd.command, slashCmd.args);
+      return;
+    }
 
     // Add user message
     addMessage(
@@ -297,6 +357,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     addMessage,
     removeMessageByType,
     handleExportResponse,
+    handleSlashCommand,
     onQueryResultReady,
   ]);
 
@@ -352,7 +413,7 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
           placeholder={
             awaitingExportResponse
               ? "回复 '导出CSV' / '导出JSON' / '不需要'"
-              : "用自然语言描述你的查询... (Ctrl+Enter 发送)"
+              : "用自然语言描述你的查询，或输入 /export csv 导出 (Ctrl+Enter 发送)"
           }
           autoSize={{ minRows: 1, maxRows: 4 }}
           disabled={isProcessing}
