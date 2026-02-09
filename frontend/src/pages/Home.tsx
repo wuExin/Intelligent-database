@@ -28,8 +28,7 @@ import { DatabaseMetadata, TableMetadata } from "../types/metadata";
 import { MetadataTree } from "../components/MetadataTree";
 import { SqlEditor } from "../components/SqlEditor";
 import { DatabaseSidebar } from "../components/DatabaseSidebar";
-import { NaturalLanguageInput } from "../components/NaturalLanguageInput";
-import { ExportDialog } from "../components/ExportDialog";
+import { ChatPanel } from "../components/ChatPanel";
 
 const { Title, Text } = Typography;
 
@@ -53,39 +52,7 @@ export const Home: React.FC = () => {
   const [executing, setExecuting] = useState(false);
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
   const [activeTab, setActiveTab] = useState<"manual" | "natural">("manual");
-  const [generatingSql, setGeneratingSql] = useState(false);
-  const [nlError, setNlError] = useState<string | null>(null);
-
-  // Export dialog state
-  const [showExportPrompt, setShowExportPrompt] = useState(false);
-  const exportPromptShownRef = useRef<string | null>(null);
-
-  // Show export dialog when result has export URLs
-  useEffect(() => {
-    console.log('[Home] useEffect triggered:', {
-      hasResult: !!queryResult,
-      executing,
-      hasExportCsvUrl: !!queryResult?.exportCsvUrl,
-      hasExportJsonUrl: !!queryResult?.exportJsonUrl,
-      shouldShow: !!(queryResult && !executing && (queryResult.exportCsvUrl || queryResult.exportJsonUrl))
-    });
-
-    if (
-      queryResult &&
-      !executing &&
-      (queryResult.exportCsvUrl || queryResult.exportJsonUrl)
-    ) {
-      // Use execution time + SQL to create a unique ID for each query execution
-      const resultId = `${queryResult.executionTimeMs}-${queryResult.sql}`;
-      if (exportPromptShownRef.current !== resultId) {
-        console.log('[Home] Export URLs detected, showing dialog');
-        setShowExportPrompt(true);
-        exportPromptShownRef.current = resultId;
-      } else {
-        console.log('[Home] Dialog already shown for this result, skipping');
-      }
-    }
-  }, [queryResult, executing]);
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (selectedDatabase) {
@@ -122,21 +89,6 @@ export const Home: React.FC = () => {
         `/api/v1/dbs/${selectedDatabase}/query`,
         { sql: sql.trim() }
       );
-
-      // Debug: Log the full response data
-      console.log('[Home] Received query result:', {
-        columns: response.data.columns,
-        rowCount: response.data.rowCount,
-        executionTimeMs: response.data.executionTimeMs,
-        sql: response.data.sql,
-        hasExportCsvUrl: !!response.data.exportCsvUrl,
-        hasExportJsonUrl: !!response.data.exportJsonUrl,
-        exportCsvUrl: response.data.exportCsvUrl,
-        exportJsonUrl: response.data.exportJsonUrl,
-        exportExpiresAt: response.data.exportExpiresAt,
-        fullData: response.data
-      });
-
       setQueryResult(response.data);
       message.success(
         `Query executed - ${response.data.rowCount} rows in ${response.data.executionTimeMs}ms`
@@ -164,38 +116,12 @@ export const Home: React.FC = () => {
     }
   };
 
-  const handleGenerateSQL = async (prompt: string) => {
-    if (!selectedDatabase) return;
-
-    setGeneratingSql(true);
-    setNlError(null);
-    try {
-      const response = await apiClient.post<{ sql: string; explanation: string }>(
-        `/api/v1/dbs/${selectedDatabase}/query/natural`,
-        { prompt }
-      );
-      setSql(response.data.sql);
-      setActiveTab("manual"); // Switch to manual tab to show generated SQL
-      message.success("SQL generated successfully! You can now edit and execute it.");
-    } catch (error: any) {
-      const errorMsg = error.response?.data?.detail || "Failed to generate SQL";
-      setNlError(errorMsg);
-      message.error(errorMsg);
-    } finally {
-      setGeneratingSql(false);
-    }
-  };
-
-  const handleCloseExportDialog = () => {
-    setShowExportPrompt(false);
-  };
-
-  const getDefaultFilename = (): string => {
-    if (selectedDatabase) {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
-      return `${selectedDatabase}_query_${timestamp}`;
-    }
-    return 'query';
+  const handleNlQueryResult = (result: QueryResult) => {
+    setQueryResult(result);
+    // Auto-scroll to results table after a short delay for render
+    setTimeout(() => {
+      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
   };
 
   const handleExportCSV = () => {
@@ -204,7 +130,6 @@ export const Home: React.FC = () => {
       return;
     }
 
-    // Warn if result is large
     if (queryResult.rows.length > 10000) {
       Modal.confirm({
         title: "Large Dataset Warning",
@@ -220,16 +145,13 @@ export const Home: React.FC = () => {
   const exportToCSV = () => {
     if (!queryResult) return;
 
-    // Generate CSV content
     const headers = queryResult.columns.map((col) => col.name);
     const csvRows = [headers.join(",")];
 
     queryResult.rows.forEach((row) => {
       const values = headers.map((header) => {
         const value = row[header];
-        // Handle null/undefined
         if (value === null || value === undefined) return "";
-        // Escape quotes and wrap in quotes if contains comma or quote
         const stringValue = String(value);
         if (stringValue.includes(",") || stringValue.includes('"') || stringValue.includes("\n")) {
           return `"${stringValue.replace(/"/g, '""')}"`;
@@ -239,7 +161,7 @@ export const Home: React.FC = () => {
       csvRows.push(values.join(","));
     });
 
-    const csvContent = csvRows.join("\n");
+    const csvContent = "\uFEFF" + csvRows.join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
@@ -256,7 +178,6 @@ export const Home: React.FC = () => {
       return;
     }
 
-    // Warn if result is large
     if (queryResult.rows.length > 10000) {
       Modal.confirm({
         title: "Large Dataset Warning",
@@ -647,11 +568,16 @@ export const Home: React.FC = () => {
                   </Text>
                 ),
                 children: (
-                  <div style={{ padding: "12px 0" }}>
-                    <NaturalLanguageInput
-                      onGenerateSQL={handleGenerateSQL}
-                      loading={generatingSql}
-                      error={nlError}
+                  <div
+                    style={{
+                      height: 400,
+                      display: "flex",
+                      flexDirection: "column",
+                    }}
+                  >
+                    <ChatPanel
+                      selectedDatabase={selectedDatabase!}
+                      onQueryResultReady={handleNlQueryResult}
                     />
                   </div>
                 ),
@@ -666,6 +592,7 @@ export const Home: React.FC = () => {
         {/* Query Results */}
         {queryResult && (
           <Card
+            ref={resultsRef}
             title={
               <Space>
                 <Text
@@ -719,18 +646,6 @@ export const Home: React.FC = () => {
               bordered
             />
           </Card>
-        )}
-
-        {/* Export Dialog */}
-        {queryResult && (queryResult.exportCsvUrl || queryResult.exportJsonUrl) && (
-          <ExportDialog
-            visible={showExportPrompt}
-            csvUrl={queryResult.exportCsvUrl}
-            jsonUrl={queryResult.exportJsonUrl}
-            defaultFilename={getDefaultFilename()}
-            rowCount={queryResult.rowCount}
-            onClose={handleCloseExportDialog}
-          />
         )}
       </div>
     </div>

@@ -96,9 +96,11 @@ Rules:
 {syntax_rules}
 7. Handle both English and Chinese natural language
 8. Be concise - return just the SQL query
+9. If the user's input is NOT related to querying this database (e.g. greetings, chitchat, questions about weather, etc.), return exactly: NOT_A_QUERY
 
 Output format:
-Return ONLY the SQL query, nothing else. No explanations, no markdown, just the SQL."""
+Return ONLY the SQL query, nothing else. No explanations, no markdown, just the SQL.
+If the input is not a database query, return exactly: NOT_A_QUERY"""
 
         return [
             {"role": "system", "content": system_message},
@@ -139,6 +141,13 @@ Return ONLY the SQL query, nothing else. No explanations, no markdown, just the 
                 generated_sql = generated_sql.replace("```sql", "").replace("```", "").strip()
             elif generated_sql.startswith("```"):
                 generated_sql = generated_sql.replace("```", "").strip()
+
+            # Check if the AI determined this is not a database query
+            if generated_sql.strip().upper() == "NOT_A_QUERY":
+                return {
+                    "sql": "",
+                    "explanation": "NOT_A_QUERY",
+                }
 
             # Generate explanation
             explanation = f"Generated SQL from: {user_prompt}"

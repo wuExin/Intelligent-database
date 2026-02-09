@@ -109,7 +109,7 @@ class QueryHistoryEntry(BaseModel):
 class NaturalLanguageInput(BaseModel):
     """Input schema for natural language to SQL conversion."""
 
-    prompt: str = Field(..., min_length=5, max_length=500)
+    prompt: str = Field(..., min_length=1, max_length=500)
 
 
 class GeneratedSqlResponse(BaseModel):

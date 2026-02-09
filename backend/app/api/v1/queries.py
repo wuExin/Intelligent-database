@@ -4,7 +4,8 @@ import json
 import csv
 import io
 from typing import Literal
-from datetime import datetime
+from datetime import datetime, date, timedelta
+from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
@@ -121,8 +122,9 @@ async def export_query_results(
         async def generate():
             """Generate CSV or JSON content."""
             if format == "csv":
-                # Generate CSV
+                # Generate CSV with UTF-8 BOM for Excel compatibility
                 output = io.StringIO()
+                output.write("\ufeff")  # UTF-8 BOM
                 writer = csv.writer(output)
 
                 # Write header
@@ -137,8 +139,20 @@ async def export_query_results(
                 yield output.getvalue()
 
             else:  # json
-                # Generate JSON
-                yield json.dumps(result.rows, ensure_ascii=False, indent=2)
+                # Generate JSON with custom encoder for Decimal/datetime types
+                class SafeEncoder(json.JSONEncoder):
+                    def default(self, o: object) -> object:
+                        if isinstance(o, Decimal):
+                            return float(o)
+                        if isinstance(o, (datetime, date)):
+                            return o.isoformat()
+                        if isinstance(o, timedelta):
+                            return str(o)
+                        if isinstance(o, bytes):
+                            return o.decode("utf-8", errors="replace")
+                        return super().default(o)
+
+                yield json.dumps(result.rows, ensure_ascii=False, indent=2, cls=SafeEncoder)
 
         return StreamingResponse(
             generate(),
